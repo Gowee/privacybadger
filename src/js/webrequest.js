@@ -34,7 +34,8 @@ var incognito = require("incognito");
 var utils = require("utils");
 
 /************ Local Variables *****************/
-var temporaryWidgetUnblock = {};
+let temporaryWidgetUnblock = {};
+let pendingTabs = new Set();
 
 /***************** Blocking Listener Functions **************/
 
@@ -855,7 +856,47 @@ function dispatcher(request, sender, sendResponse) {
   }
 }
 
+
+/**
+ * Cancels all requests, populates list of pending tabs to be reloaded later,
+ * when Privacy Badger is ready.
+ *
+ * @param {Object} details chrome.webRequest request details
+ * @returns {Object}
+ */
+function onBeforeReady(details) {
+  if (!pendingTabs || details.tabId < 0) {
+    return;
+  }
+
+  pendingTabs.add(details.tabId);
+
+  return {
+    cancel: true
+  };
+}
+
+/**
+ * Reloads all tabs that loaded before Privacy Badger was ready.
+ */
+function reloadPendingTabs() {
+  for (let tab_id of pendingTabs) {
+    chrome.tabs.reload(tab_id);
+  }
+  pendingTabs = null;
+}
+
+
 /*************** Event Listeners *********************/
+function startBeforeReadyListener() {
+  chrome.webRequest.onBeforeRequest.addListener(onBeforeReady, {urls: ["<all_urls>"]}, ["blocking"]);
+}
+
+function stopBeforeReadyListener() {
+  chrome.webRequest.onBeforeRequest.removeListener(onBeforeReady);
+  reloadPendingTabs();
+}
+
 function startListeners() {
   chrome.webRequest.onBeforeRequest.addListener(onBeforeRequest, {urls: ["http://*/*", "https://*/*"]}, ["blocking"]);
 
@@ -877,8 +918,11 @@ function startListeners() {
 }
 
 /************************************** exports */
-var exports = {};
-exports.startListeners = startListeners;
+let exports = {
+  startBeforeReadyListener,
+  startListeners,
+  stopBeforeReadyListener,
+};
 return exports;
 /************************************** exports */
 })();
